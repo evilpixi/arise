@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+
+  <style>
+    body {
+      background-color: #252626;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-direction: column;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+
+    h1 {
+      color: darkorchid;
+      font-size: 120px;
+    }
+
+    #timertext {
+      font-size: 220px;
+    }
+
+    .btn {
+      border: 0px;
+      background-color: blueviolet;
+      color: orange;
+      font-size: 36px;
+      padding: 20px;
+      border-radius: 10px;
+      width: 300px;
+      font-weight: 400;
+    }
+
+    .btn:hover {
+      background-color: purple;
+      animation: 1ms;
+    }
+
+    .btn:active {
+
+      padding-bottom: 18px;
+      padding-top: 22px;
+    }
+
+    .cum-sugar {
+      font-weight: 900;
+      color: orangered;
+    }
+    
+    .btn-container {
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Sugar's Cum Timer</h1>
+
+  <div id="timertext">00:00:00</div>
+
+  <div class="btn-container">
+    <button class="btn" onclick="addTime(1)">Add 1 minute</button>
+    <button class="btn" onclick="restart()">Restart</button>
+  </div>
+  
+
+  <script>
+    const startTime = 35 * 60;
+    const timerText = document.getElementById("timertext");
+    let cumTime = startTime;
+
+    let timer = setInterval(()=> {
+      cumTime -= 1;
+      
+      updateText(cumTime);
+    }, 1000)
+
+    function addTime(time) {
+      if (cumTime < 0) return;
+      cumTime += 60;
+
+      updateText(cumTime)
+    }
+
+    function restart() {
+      cumTime = startTime;
+
+      updateText(cumTime);
+    }
+
+    function updateText(time) {
+      if (time <= 0) {
+        timerText.innerHTML = "CUM SUGAR!"
+        timerText.className += " cum-sugar"
+      }
+      else {
+        const hour = Math.floor(time / 3600);
+        const min = Math.floor((time % 3600) / 60);
+        const sec = time % 60;
+
+        const hourFormatted = String(hour).padStart(2, '0');
+        const minFormatted = String(min).padStart(2, '0');
+        const secFormatted = String(sec).padStart(2, '0');
+
+        const currentTime = `${hourFormatted}:${minFormatted}:${secFormatted}`;
+        timerText.innerHTML = currentTime;
+      }
+    }
+
+    updateText(cumTime);
+  </script>
+</body>
+</html>

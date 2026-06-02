@@ -1,0 +1,7 @@
+node_modules
+
+# Vite production output (upload dist/ contents to itch.io, keep out of git)
+dist/
+
+*.local
+.DS_Store
