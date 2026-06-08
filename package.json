@@ -6,8 +6,9 @@
   "scripts": {
     "game": "vite",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "export": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "pnpm typecheck && vite build",
+    "export": "pnpm typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

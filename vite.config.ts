@@ -1,5 +1,4 @@
-/// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 /** Relative asset URLs for itch.io and other static hosts in subfolders. */
 export default defineConfig({
