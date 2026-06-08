@@ -33,25 +33,4 @@ export default class HexRenderer {
     graphics.lineStyle(1, 0x000000, 0.35);
     graphics.strokePoints(points, true);
   }
-
-  public static getColorForValue(value: number, seaLevel = 0.33): number {
-    if (value < seaLevel) {
-      // Deep and shallow water
-      return (value / seaLevel) < 0.5 ? 0x002a55 : 0x0c3e70;
-    }
-
-    // Remap land: [seaLevel, 1] → [0, 1]
-    const t = (value - seaLevel) / (1 - seaLevel);
-    const landPalette = [
-      0x7fbf74, // lowland green
-      0xb7d472, // plains
-      0xe2c96d, // hills
-      0xc28e59, // high hills / foothills
-      0x8d6d4d, // low mountain
-      0xd6d6d6, // mountain peak / snow
-    ];
-
-    const index = Math.min(landPalette.length - 1, Math.floor(t * landPalette.length));
-    return landPalette[index];
-  }
 }

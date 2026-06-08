@@ -1,40 +1,15 @@
 import { createNoise2D } from "simplex-noise";
-import HexGrid from "../hex/HexGrid";
-import type { IMapGenerator, MapConfig, MapData, MapShape, MapTile } from "./MapTypes";
+import type HexGrid from "../../hex/HexGrid";
+import type {
+  MapPipelineContext,
+  MapPipelineStep,
+  MapShape,
+  MapTile,
+  NoiseConfig,
+} from "../MapTypes";
+import { clamp01, fbm, mulberry32 } from "../NoiseUtils";
 
-function mulberry32(seed: number): () => number {
-  return function () {
-    seed |= 0;
-    seed = (seed + 0x6d2b79f5) | 0;
-    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function fbm(
-  noise2D: (x: number, y: number) => number,
-  x: number,
-  y: number,
-  octaves: number,
-  persistence: number,
-  lacunarity: number,
-): number {
-  let value = 0;
-  let amplitude = 1;
-  let freq = 1;
-  let maxValue = 0;
-
-  for (let i = 0; i < octaves; i++) {
-    value += noise2D(x * freq, y * freq) * amplitude;
-    maxValue += amplitude;
-    amplitude *= persistence;
-    freq *= lacunarity;
-  }
-
-  return value / maxValue;
-}
-
+/** Distorts sampling coordinates with a secondary wave so masks avoid perfectly round shapes. */
 function warpCoordinates(dx: number, dy: number) {
   return {
     x: dx + Math.sin(dy * Math.PI * 3.2) * 0.12,
@@ -174,65 +149,61 @@ const SHAPE_PRESETS: Record<MapShape, ShapePreset> = {
   },
 };
 
-export default class NoiseMapGenerator implements IMapGenerator {
-  /**
-   * Generate a map grid using noise configuration.
-   *
-   * Config options:
-   * - frequency: base sampling frequency for the noise field.
-   *     lower values → larger, smoother terrain features and broader continents.
-   *     higher values → smaller, more detailed islands and sharper variation.
-   * - octaves: number of FBM layers to combine.
-   *     1 = single noise layer.
-   *     >1 adds fractal detail by summing multiple noise frequencies.
-   *     more octaves make the map more complex and noisy.
-   * - persistence: amplitude multiplier for each additional octave.
-   *     lower values reduce the contribution of finer octaves, producing smoother maps.
-   *     higher values make small-scale details stronger and more pronounced.
-   * - lacunarity: frequency multiplier for each additional octave.
-   *     values >1 increase the frequency of later octaves.
-   *     larger lacunarity gives faster-growing detail at smaller scales.
-   * - seaLevel: threshold that controls how much of the map is water vs land.
-   *     higher seaLevel means more water and less land.
-   *     lower seaLevel means more land and fewer oceans.
-   *
-   * @param config Map generation settings.
-   * @returns Generated map data with grid, seed, and rendered sea level.
-   */
-  generate(config: MapConfig): MapData {
-    const { width, height, seed, noise: noiseCfg, island: islandCfg } = config;
+/** Default sea level associated with a shape preset, if any. */
+export function defaultSeaLevelForShape(shape?: MapShape): number | undefined {
+  return shape ? SHAPE_PRESETS[shape].seaLevel : undefined;
+}
 
-    const shape = islandCfg?.shape;
+export type ElevationStepConfig = {
+  /** Seed used to build this step's own noise field. */
+  seed: number;
+  /** Resolved FBM settings (frequency, octaves, persistence, lacunarity). */
+  noise: Required<NoiseConfig>;
+  /** Optional shape preset; adjusts frequency and applies a landmass mask. */
+  shape?: MapShape;
+};
+
+/**
+ * First pipeline stage — builds the height field every later step relies on.
+ *
+ * Combines fractal (FBM) simplex noise with an optional shape mask so land
+ * forms continents/islands instead of uniform static. The mask multiplies the
+ * raw noise by a value in [0, 1] that fades towards open ocean, producing
+ * organic coastlines instead of a hard-edged threshold.
+ */
+export default class ElevationStep implements MapPipelineStep {
+  public readonly name = "elevation";
+
+  constructor(private readonly config: ElevationStepConfig) {}
+
+  public run(grid: HexGrid<MapTile>, context: MapPipelineContext): void {
+    const { seed, noise, shape } = this.config;
     const preset = shape ? SHAPE_PRESETS[shape] : undefined;
-
-    const frequency  = noiseCfg?.frequency  ?? 0.05; // base noise frequency
-    const octaves    = noiseCfg?.octaves    ?? 1;    // number of FBM layers
-    const persistence = noiseCfg?.persistence ?? 0.5; // amplitude decay per octave
-    const lacunarity = noiseCfg?.lacunarity  ?? 2.0; // frequency growth per octave
-    const seaLevel   = islandCfg?.seaLevel  ?? preset?.seaLevel ?? 0.33;
-    const effectiveFreq = frequency * (preset?.freqMultiplier ?? 1);
+    const effectiveFrequency = noise.frequency * (preset?.freqMultiplier ?? 1);
 
     const noise2D = createNoise2D(mulberry32(seed));
 
-    const grid = new HexGrid<MapTile>(width, height, (col, row) => {
-      // Normalized position in [-1, 1] for the mask
-      const dx = (col / (width  - 1)) * 2 - 1;
-      const dy = (row / (height - 1)) * 2 - 1;
+    grid.forEachTile((tile, coords) => {
+      const { dx, dy } = context.normalize(coords);
 
-      const raw = octaves > 1
-        ? fbm(noise2D, col * effectiveFreq, row * effectiveFreq, octaves, persistence, lacunarity)
-        : noise2D(col * effectiveFreq, row * effectiveFreq);
+      const raw = noise.octaves > 1
+        ? fbm(
+          noise2D,
+          coords.col * effectiveFrequency,
+          coords.row * effectiveFrequency,
+          noise.octaves,
+          noise.persistence,
+          noise.lacunarity,
+        )
+        : noise2D(coords.col * effectiveFrequency, coords.row * effectiveFrequency);
 
-      let value = raw * 0.5 + 0.5; // [-1,1] → [0,1]
+      let elevation = raw * 0.5 + 0.5; // [-1, 1] -> [0, 1]
 
       if (preset) {
-        value *= preset.mask(dx, dy);
+        elevation *= preset.mask(dx, dy);
       }
 
-      value = Number(Math.min(1, Math.max(0, value)).toFixed(3));
-      return { col, row, value };
+      tile.elevation = clamp01(elevation);
     });
-
-    return { grid, seed, seaLevel };
   }
 }

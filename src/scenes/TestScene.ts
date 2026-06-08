@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
 import HexMath from '../hex/HexMath';
 import HexDraws from '../hex/HexDraws';
-import HexRenderer from '../hex/HexRenderer';
 import GameSession from '../game/GameSession';
-import NoiseMapGenerator from '../mapcreation/NoiseMapGenerator';
+import WorldMapGenerator from '../mapcreation/WorldMapGenerator';
+import { getTileColor } from '../mapcreation/BiomePalette';
 
 const size = 16;
 
@@ -18,7 +18,7 @@ export class TestScene extends Phaser.Scene {
     const hexDraw = new HexDraws(hexMath);
 
     const session = new GameSession(
-      new NoiseMapGenerator(),
+      new WorldMapGenerator(),
       {
         mapWidth: 16 * 4,
         mapHeight: 10 * 4,
@@ -45,27 +45,14 @@ export class TestScene extends Phaser.Scene {
       const x = offsetX + world.x;
       const y = offsetY + world.y;
 
-      hexDraw.drawHexagon(this, 
+      hexDraw.drawHexagon(this,
         x,
         y,
         {
           filled: true,
-          color: HexRenderer.getColorForValue(tile.value, session.map.seaLevel),
-          //color: 0xff0000 * tile.value + 0x00ff00 * tile.value + 0x0000ff * tile.value,
+          color: getTileColor(tile),
           borderThickness: 0.2,
         });
-
-      // const tileNumber = tileIndex + 1;
-      // const label = `(${coords.col},${coords.row})\n${tileNumber}\n${tile.value.toFixed(2)}`;
-      // const text = this.add.text(x, y, label, {
-      //   fontFamily: 'Arial',
-      //   fontSize: '16px',
-      //   color: '#ffffff',
-      //   align: 'center',
-      //   stroke: '#000000',
-      //   strokeThickness: 3,
-      // }).setOrigin(0.5);
-      // tileIndex += 1;
     });
 
     // panoramic
