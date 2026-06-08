@@ -8,6 +8,13 @@ export type MoistureStepConfig = {
   seed: number;
   /** Resolved FBM settings (frequency, octaves, persistence, lacunarity). */
   noise: Required<NoiseConfig>;
+  /**
+   * Flat offset added to the noise-based humidity before clamping. Resolved
+   * from `MapConfig.moistureLevel` by `WorldMapGenerator`; positive values
+   * make the whole map wetter, negative values drier — mirrors `heightBias`/
+   * `temperatureBias`.
+   */
+  moistureBias: number;
 };
 
 /**
@@ -24,7 +31,7 @@ export default class MoistureStep implements MapPipelineStep {
   constructor(private readonly config: MoistureStepConfig) {}
 
   public run(grid: HexGrid<MapTile>, _context: MapPipelineContext): void {
-    const { seed, noise } = this.config;
+    const { seed, noise, moistureBias } = this.config;
     const noise2D = createNoise2D(mulberry32(seed));
 
     grid.forEachTile((tile, coords) => {
@@ -39,7 +46,7 @@ export default class MoistureStep implements MapPipelineStep {
         )
         : noise2D(coords.col * noise.frequency, coords.row * noise.frequency);
 
-      tile.moisture = clamp01(raw * 0.5 + 0.5);
+      tile.moisture = clamp01(raw * 0.5 + 0.5 + moistureBias);
     });
   }
 }

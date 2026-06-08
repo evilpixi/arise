@@ -8,6 +8,8 @@ export type BiomeAssignmentStepConfig = {
   coldTemperature: number;
   /** Temperature above this value is considered warm. */
   warmTemperature: number;
+  /** In temperate climates, moisture below this value yields plains rather than grassland. */
+  plainsMoisture: number;
   /** Moisture below this value is considered dry. */
   dryMoisture: number;
   /** Moisture above this value is considered wet. */
@@ -18,15 +20,16 @@ export type BiomeAssignmentStepConfig = {
  * Final pipeline stage — classifies each tile into a concrete biome.
  *
  * Crosses temperature and moisture in a Whittaker-style matrix (the same
- * three-by-three split described in plan.md's biome section), with elevation
- * carving out oceans below sea level and bare peaks above the high-mountain
- * threshold regardless of climate:
+ * three-by-three split described in plan.md's biome section, with the
+ * temperate+dry cell further split into `plains`/`grassland` by aridity),
+ * with elevation carving out oceans below sea level and bare peaks above the
+ * high-mountain threshold regardless of climate:
  *
  * ```
- *               dry              moderate           wet
- *   warm     desert            savanna         tropicalRainforest
- *   temperate grassland        temperateForest swamp
- *   cold     tundra            taiga           taiga
+ *               very dry   dry        moderate   wet
+ *   warm       desert                savanna    jungle
+ *   temperate  plains      grassland forest     swamp
+ *   cold       tundra      tundra    tundra     tundra
  * ```
  */
 export default class BiomeAssignmentStep implements MapPipelineStep {
@@ -46,6 +49,7 @@ export default class BiomeAssignmentStep implements MapPipelineStep {
       highMountainElevation,
       coldTemperature,
       warmTemperature,
+      plainsMoisture,
       dryMoisture,
       wetMoisture,
     } = this.config;
@@ -56,18 +60,17 @@ export default class BiomeAssignmentStep implements MapPipelineStep {
       return temperature < coldTemperature ? "glacier" : "mountain";
     }
 
-    if (temperature < coldTemperature) {
-      return moisture < dryMoisture ? "tundra" : "taiga";
-    }
+    if (temperature < coldTemperature) return "tundra";
 
     if (temperature < warmTemperature) {
+      if (moisture < plainsMoisture) return "plains";
       if (moisture < dryMoisture) return "grassland";
-      if (moisture < wetMoisture) return "temperateForest";
+      if (moisture < wetMoisture) return "forest";
       return "swamp";
     }
 
     if (moisture < dryMoisture) return "desert";
     if (moisture < wetMoisture) return "savanna";
-    return "tropicalRainforest";
+    return "jungle";
   }
 }

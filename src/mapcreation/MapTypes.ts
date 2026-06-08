@@ -62,13 +62,13 @@ export type Biome =
   | "glacier"
   | "mountain"
   | "tundra"
-  | "taiga"
+  | "plains"
   | "grassland"
-  | "temperateForest"
+  | "forest"
   | "swamp"
   | "desert"
   | "savanna"
-  | "tropicalRainforest";
+  | "jungle";
 
 /**
  * A single map tile, progressively enriched as the generation pipeline runs.
@@ -136,6 +136,31 @@ export type MapConfig = {
   noise?: NoiseConfig;
   /** Optional island shape and sea level settings. */
   island?: IslandConfig;
+  /**
+   * Overall terrain elevation in [0, 1]. `0.5` is neutral; higher values
+   * raise the whole height field (more mountains and land), lower values
+   * flatten it (more ocean). Defaults to `0.5`.
+   */
+  heightLevel?: number;
+  /**
+   * Overall climate warmth in [0, 1]. `0.5` is neutral; higher values shift
+   * the whole map warmer, lower values shift it colder. Defaults to `0.5`.
+   */
+  temperatureLevel?: number;
+  /**
+   * Overall climate humidity in [0, 1]. `0.5` is neutral; higher values
+   * shift the whole map wetter (more forests, swamps and jungles), lower
+   * values drier (more plains, savannas and deserts). Defaults to `0.5`.
+   */
+  moistureLevel?: number;
+  /**
+   * Coastline/landmass irregularity in [0, 1]. `0.5` matches the shape
+   * masks' original hand-tuned domain-warp strength; lower values produce
+   * smoother, rounder coastlines, higher values produce more chaotic,
+   * hand-drawn ones. Only `continents` and `fractal` warp their mask, so
+   * other shapes ignore this knob. Defaults to `0.5`.
+   */
+  irregularity?: number;
 };
 
 export type MapData = {

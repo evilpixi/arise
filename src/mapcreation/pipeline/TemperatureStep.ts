@@ -8,6 +8,12 @@ export type TemperatureStepConfig = {
    * Higher values push mountain peaks towards freezing even near the equator.
    */
   altitudeFactor: number;
+  /**
+   * Flat offset added to the latitude/altitude temperature before clamping.
+   * Resolved from `MapConfig.temperatureLevel` by `WorldMapGenerator`;
+   * positive values shift the whole climate warmer, negative values colder.
+   */
+  temperatureBias: number;
 };
 
 /**
@@ -34,7 +40,9 @@ export default class TemperatureStep implements MapPipelineStep {
       const heightAboveSea = Math.max(0, tile.elevation - context.seaLevel);
       const altitudeCooling = heightAboveSea * this.config.altitudeFactor;
 
-      tile.temperature = clamp01(latitudeTemperature - altitudeCooling);
+      tile.temperature = clamp01(
+        latitudeTemperature - altitudeCooling + this.config.temperatureBias,
+      );
     });
   }
 }

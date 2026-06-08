@@ -9,16 +9,21 @@ import type {
 } from "../MapTypes";
 import { clamp01, fbm, mulberry32 } from "../NoiseUtils";
 
-/** Distorts sampling coordinates with a secondary wave so masks avoid perfectly round shapes. */
-function warpCoordinates(dx: number, dy: number) {
+/**
+ * Distorts sampling coordinates with a secondary wave so masks avoid
+ * perfectly round shapes. `strength` scales the warp amplitude — `1` is the
+ * masks' original hand-tuned look, `0` removes the warp entirely (perfectly
+ * radial coastlines), values above `1` exaggerate it into more chaotic ones.
+ */
+function warpCoordinates(dx: number, dy: number, strength: number) {
   return {
-    x: dx + Math.sin(dy * Math.PI * 3.2) * 0.12,
-    y: dy + Math.cos(dx * Math.PI * 2.7) * 0.10,
+    x: dx + Math.sin(dy * Math.PI * 3.2) * 0.12 * strength,
+    y: dy + Math.cos(dx * Math.PI * 2.7) * 0.10 * strength,
   };
 }
 
-function continentMask(dx: number, dy: number): number {
-  const { x: wx, y: wy } = warpCoordinates(dx, dy);
+function continentMask(dx: number, dy: number, irregularity: number): number {
+  const { x: wx, y: wy } = warpCoordinates(dx, dy, irregularity);
 
   const continentalCores: Array<[number, number, number]> = [
     [-0.48, 0.0, 1.55],
@@ -59,8 +64,8 @@ function continentMask(dx: number, dy: number): number {
   return Math.min(1, Math.max(0, mask * (0.78 + 0.16 * verticalSpread)));
 }
 
-function fractalMask(dx: number, dy: number): number {
-  const { x: wx, y: wy } = warpCoordinates(dx, dy);
+function fractalMask(dx: number, dy: number, irregularity: number): number {
+  const { x: wx, y: wy } = warpCoordinates(dx, dy, irregularity);
 
   const continentalCores: Array<[number, number, number]> = [
     [-0.48, 0.0, 1.55],
@@ -105,8 +110,10 @@ function fractalMask(dx: number, dy: number): number {
 type ShapePreset = {
   freqMultiplier: number;
   seaLevel: number;
-  // dx, dy in normalized [-1, 1] space; returns a multiplier in [0, 1]
-  mask: (dx: number, dy: number) => number;
+  // dx, dy in normalized [-1, 1] space; irregularity scales domain-warp
+  // amplitude for masks that use it (continents/fractal); returns a
+  // multiplier in [0, 1]
+  mask: (dx: number, dy: number, irregularity: number) => number;
 };
 
 const SHAPE_PRESETS: Record<MapShape, ShapePreset> = {
@@ -161,6 +168,22 @@ export type ElevationStepConfig = {
   noise: Required<NoiseConfig>;
   /** Optional shape preset; adjusts frequency and applies a landmass mask. */
   shape?: MapShape;
+  /**
+   * Flat offset added to the masked height field before clamping. Resolved
+   * from `MapConfig.heightLevel` by `WorldMapGenerator`; positive values
+   * raise the whole map (more mountains and land), negative values lower it
+   * (flatter, more ocean).
+   */
+  heightBias: number;
+  /**
+   * Multiplier applied to the domain-warp amplitude used by masks that warp
+   * their sampling coordinates (`continents`, `fractal`). Resolved from
+   * `MapConfig.irregularity` by `WorldMapGenerator`; `1` matches the masks'
+   * original hand-tuned warp strength, `0` yields perfectly smooth radial
+   * coastlines, values above `1` make them more chaotic. Masks that don't
+   * warp their coordinates ignore it.
+   */
+  irregularityScale: number;
 };
 
 /**
@@ -177,7 +200,7 @@ export default class ElevationStep implements MapPipelineStep {
   constructor(private readonly config: ElevationStepConfig) {}
 
   public run(grid: HexGrid<MapTile>, context: MapPipelineContext): void {
-    const { seed, noise, shape } = this.config;
+    const { seed, noise, shape, heightBias, irregularityScale } = this.config;
     const preset = shape ? SHAPE_PRESETS[shape] : undefined;
     const effectiveFrequency = noise.frequency * (preset?.freqMultiplier ?? 1);
 
@@ -200,10 +223,10 @@ export default class ElevationStep implements MapPipelineStep {
       let elevation = raw * 0.5 + 0.5; // [-1, 1] -> [0, 1]
 
       if (preset) {
-        elevation *= preset.mask(dx, dy);
+        elevation *= preset.mask(dx, dy, irregularityScale);
       }
 
-      tile.elevation = clamp01(elevation);
+      tile.elevation = clamp01(elevation + heightBias);
     });
   }
 }

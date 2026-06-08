@@ -1,94 +1,123 @@
 import Phaser from 'phaser';
 import HexMath from '../hex/HexMath';
-import HexDraws from '../hex/HexDraws';
 import GameSession from '../game/GameSession';
 import WorldMapGenerator from '../mapcreation/WorldMapGenerator';
-import { getTileColor } from '../mapcreation/BiomePalette';
+import HexMapRenderer from '../mapcreation/render/HexMapRenderer';
+import MapGenerationPanel from './MapGenerationPanel';
+import type { MapGenerationParams } from './MapGenerationPanel';
 
-const size = 16;
+const TILE_SIZE = 8;
+const MAP_WIDTH = 16 * 8;
+const MAP_HEIGHT = 10 * 8;
+
+// Initial values for the elevation-noise sliders in `MapGenerationPanel`;
+// the panel owns them from here on, `regenerateMap` just relays its values.
+const DEFAULT_NOISE = {
+  frequency: 0.06,
+  octaves: 5,
+  persistence: 0.15,
+  lacunarity: 4.8,
+};
+
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2.5;
+const ZOOM_STEP = 0.1;
+
+function randomSeed(): number {
+  return Math.floor(Math.random() * 2 ** 32);
+}
+
+function defaultGenerationParams(): MapGenerationParams {
+  return {
+    seed: randomSeed(),
+    islandShape: 'continents',
+    heightLevel: 0.5,
+    temperatureLevel: 0.5,
+    moistureLevel: 0.5,
+    irregularity: 0.5,
+    noiseFrequency: DEFAULT_NOISE.frequency,
+    noiseOctaves: DEFAULT_NOISE.octaves,
+    noisePersistence: DEFAULT_NOISE.persistence,
+    noiseLacunarity: DEFAULT_NOISE.lacunarity,
+  };
+}
 
 export class TestScene extends Phaser.Scene {
+  private readonly hexMath = new HexMath({ size: TILE_SIZE, orientation: 'pointy', offset: 'odd' });
+  private readonly generator = new WorldMapGenerator();
+
+  private mapRenderer?: HexMapRenderer;
+  private panel?: MapGenerationPanel;
+
   constructor() {
     super({ key: 'TestScene' });
   }
 
   create(): void {
     this.drawDebugGrid();
-    const hexMath = new HexMath({ size: size, orientation: "pointy", offset: "odd" });
-    const hexDraw = new HexDraws(hexMath);
+    this.mapRenderer = new HexMapRenderer(this.hexMath);
 
-    const session = new GameSession(
-      new WorldMapGenerator(),
-      {
-        mapWidth: 16 * 4,
-        mapHeight: 10 * 4,
-        noise: {
-          frequency: 0.06,
-          octaves: 5,
-          persistence: 0.15,
-          lacunarity: 4.8,
-        },
-        island: {
-          shape: "continents",
-          seaLevel: 0.2,
-        },
-      }
-    );
+    const initialParams = defaultGenerationParams();
+    this.regenerateMap(initialParams);
 
-    console.log(session)
+    this.panel = new MapGenerationPanel(document.body, {
+      initial: initialParams,
+      onRegenerate: (params) => this.regenerateMap(params),
+    });
+    this.events.once('shutdown', () => this.panel?.destroy());
 
-    const offsetX = size * Math.sqrt(3) / 2;
-    const offsetY = size;
+    this.setupCameraControls();
+  }
 
-    session.map.grid.forEachTile((tile, coords) => {
-      const world = hexMath.tileToWorld(coords);
-      const x = offsetX + world.x;
-      const y = offsetY + world.y;
-
-      hexDraw.drawHexagon(this,
-        x,
-        y,
-        {
-          filled: true,
-          color: getTileColor(tile),
-          borderThickness: 0.2,
-        });
+  /** Build a fresh `GameSession` from the panel's parameters and draw it. */
+  private regenerateMap(params: MapGenerationParams): void {
+    const session = new GameSession(this.generator, {
+      mapWidth: MAP_WIDTH,
+      mapHeight: MAP_HEIGHT,
+      seed: params.seed,
+      noise: {
+        frequency: params.noiseFrequency,
+        octaves: params.noiseOctaves,
+        persistence: params.noisePersistence,
+        lacunarity: params.noiseLacunarity,
+      },
+      island: { shape: params.islandShape },
+      heightLevel: params.heightLevel,
+      temperatureLevel: params.temperatureLevel,
+      moistureLevel: params.moistureLevel,
+      irregularity: params.irregularity,
     });
 
-    // panoramic
-    let isPanoramicMoving = false
-    let panStart = {x: 0, y: 0}
+    this.mapRenderer?.render(this, session.map);
+  }
 
-    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer)=> {
+  /** Wire up click-and-drag panning and mouse-wheel zoom on the main camera. */
+  private setupCameraControls(): void {
+    let isPanoramicMoving = false;
+    const panStart = { x: 0, y: 0 };
+
+    this.input.on('pointerdown', () => {
       isPanoramicMoving = true;
       panStart.x = this.cameras.main.scrollX;
       panStart.y = this.cameras.main.scrollY;
-    })
-    this.input.on("pointermove", (pointer: Phaser.Input.Pointer)=> {
-      if (!isPanoramicMoving) return;
-      const zoomFactor = 1// / this.cameras.main.zoom;
-      this.cameras.main.scrollX = panStart.x - (pointer.x - pointer.downX) * zoomFactor;
-      this.cameras.main.scrollY = panStart.y - (pointer.y - pointer.downY) * zoomFactor;
-    })
-    this.input.on("pointerup", () => {
-      isPanoramicMoving = false;
-    })
-
-    this.input.on('wheel', (pointer: Phaser.Input.Pointer, gameObjects: any, deltaX: number, deltaY: number, deltaZ: number) => {
-      const camera = this.cameras.main;
-      const minZoom = 0.5;
-      const maxZoom = 2.5;
-      const zoomStep = 0.1;
-
-      const zoomDirection = deltaY < 0 ? zoomStep : -zoomStep;
-      camera.zoom = Phaser.Math.Clamp(camera.zoom + zoomDirection, minZoom, maxZoom);
-      camera.zoom = Phaser.Math.Clamp(camera.zoom + zoomDirection, minZoom, maxZoom);
     });
-    
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (!isPanoramicMoving) return;
+      this.cameras.main.scrollX = panStart.x - (pointer.x - pointer.downX);
+      this.cameras.main.scrollY = panStart.y - (pointer.y - pointer.downY);
+    });
+    this.input.on('pointerup', () => {
+      isPanoramicMoving = false;
+    });
+
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _deltaX: number, deltaY: number) => {
+      const camera = this.cameras.main;
+      const zoomDirection = deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP;
+      camera.zoom = Phaser.Math.Clamp(camera.zoom + zoomDirection, MIN_ZOOM, MAX_ZOOM);
+    });
   }
 
-  drawDebugGrid()
-  {
+  private drawDebugGrid(): void {
     const graphics = this.add.graphics();
 
     // Grid configuration
@@ -98,25 +127,25 @@ export class TestScene extends Phaser.Scene {
     const subdivision = size / 2; // Secondary lines every 64px
 
     // 1. Draw subdivisions (thinner or more transparent lines)
-    graphics.lineStyle(1, 0x444444, 0.5); 
-    
+    graphics.lineStyle(1, 0x444444, 0.5);
+
     for (let x = 0; x < width; x += subdivision) {
-        graphics.lineBetween(x, 0, x, height);
+      graphics.lineBetween(x, 0, x, height);
     }
     for (let y = 0; y < height; y += subdivision) {
-        graphics.lineBetween(0, y, width, y);
+      graphics.lineBetween(0, y, width, y);
     }
 
     // 2. Draw primary guide lines (every 128px)
     graphics.lineStyle(2, 0x00ff00, 0.8); // Green color for emphasis
-    
+
     for (let x = 0; x < width; x += size) {
-        graphics.lineBetween(x, 0, x, height);
+      graphics.lineBetween(x, 0, x, height);
     }
     for (let y = 0; y < height; y += size) {
-        graphics.lineBetween(0, y, width, y);
+      graphics.lineBetween(0, y, width, y);
     }
 
-    graphics.setAlpha(0.4)
+    graphics.setAlpha(0.4);
   }
 }

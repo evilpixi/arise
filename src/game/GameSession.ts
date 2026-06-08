@@ -6,6 +6,10 @@ export type GameSessionConfig = {
   seed?: number;
   noise?: NoiseConfig;
   island?: IslandConfig;
+  heightLevel?: number;
+  temperatureLevel?: number;
+  moistureLevel?: number;
+  irregularity?: number;
 };
 
 export default class GameSession {
@@ -22,6 +26,10 @@ export default class GameSession {
       seed: this.seed,
       noise: config.noise,
       island: config.island,
+      heightLevel: config.heightLevel,
+      temperatureLevel: config.temperatureLevel,
+      moistureLevel: config.moistureLevel,
+      irregularity: config.irregularity,
     };
     this.map = mapGenerator.generate(mapConfig);
 

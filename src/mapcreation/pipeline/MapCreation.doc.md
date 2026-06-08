@@ -31,15 +31,25 @@ NoiseUtils.ts           mulberry32 (seeded PRNG), fbm (fractal noise), clamp01
 MapPipeline.ts          Runs an ordered list of MapPipelineStep over the grid
 WorldMapGenerator.ts    Builds the context + the concrete step list (the
                         IMapGenerator the game actually uses)
-BiomePalette.ts         Biome -> render color mapping (+ river tint)
+BiomePalette.ts         Biome -> render color mapping + river line color
 pipeline/
-  ElevationStep.ts          1. height field (noise + shape mask)
-  TemperatureStep.ts        2. latitude + altitude -> temperature
+  ElevationStep.ts          1. height field (noise + shape mask + height bias)
+  TemperatureStep.ts        2. latitude + altitude + temperature bias
   MoistureStep.ts           3. base humidity (noise)
   RiverStep.ts              4. river tracing (downhill from highlands to sea)
   MoistureModifierStep.ts   5. river/coast bonuses + prevailing-wind rain shadow
   BiomeAssignmentStep.ts    6. final biome classification (Whittaker matrix)
+render/
+  MapRenderer.ts            Rendering strategy interface — consumes MapData only
+  HexMapRenderer.ts         Hex-tile implementation (biome fill + river lines)
 ```
+
+Map *generation* and map *rendering* are intentionally independent: every
+step above only ever produces a `MapData` (a `HexGrid<MapTile>` plus seed and
+sea level), with no rendering knowledge whatsoever. Anything that turns that
+data into pixels lives behind the `MapRenderer` interface in `render/`, so a
+scene can swap in a different drawing technique (e.g. a simplified minimap)
+without touching generation at all — see "Rendering" below.
 
 `MapPipelineStep` is the `Strategy` that makes each stage swappable —
 replacing, removing or reordering a step only means editing the list inside
@@ -73,10 +83,24 @@ than perfectly radial.
 `island.seaLevel` → the shape preset's default → `0.33`, and then shared via
 `MapPipelineContext.seaLevel` with every later step.
 
+Finally, `MapConfig.heightLevel` (a normalized `[0, 1]` knob, `0.5` = neutral)
+is resolved by `WorldMapGenerator` into a flat `heightBias` in `[-0.3, 0.3]`
+and added to the masked field before clamping — raising or lowering the whole
+map at once (more/less land and mountains) without changing its shape.
+
+`MapConfig.irregularity` (also normalized `[0, 1]`, `0.5` = neutral) is
+resolved into an `irregularityScale` in `[0, 2]` — `1` at the neutral
+midpoint — that multiplies the amplitude of `warpCoordinates`, the secondary
+wave `continentMask`/`fractalMask` use to distort their sampling coordinates
+(see "domain-warp" above). `0` removes the warp entirely, producing perfectly
+radial coastlines; values above `1` exaggerate it into more chaotic, jagged
+ones. `pangea`, `islands` and `mediterranean` don't warp their masks, so they
+ignore this knob.
+
 ### 2. Temperature — `TemperatureStep`
 
 ```
-temperature = latitude - max(0, elevation - seaLevel) * altitudeFactor
+temperature = latitude - max(0, elevation - seaLevel) * altitudeFactor + temperatureBias
 ```
 
 The vertical center of the map is treated as the equator
@@ -86,12 +110,22 @@ level* then subtracts further warmth — this is what produces snow-capped
 peaks even on landmasses that sit at warm latitudes (e.g. equatorial
 mountains), matching the "zonación vertical" described in `plan.md`.
 
+`temperatureBias` mirrors `heightBias`: `WorldMapGenerator` resolves
+`MapConfig.temperatureLevel` (`[0, 1]`, `0.5` = neutral) into a flat offset in
+`[-0.3, 0.3]` that shifts the whole climate warmer or colder uniformly.
+
 ### 3. Base moisture — `MoistureStep`
 
 A second, independent FBM noise field (different seed, so it doesn't simply
 trace elevation) gives every tile a starting humidity in `[0, 1]`. This is
 intentionally a rough first pass — `RiverStep` and `MoistureModifierStep`
 reshape it with geography-aware detail afterwards.
+
+`moistureBias` mirrors `heightBias`/`temperatureBias`: `WorldMapGenerator`
+resolves `MapConfig.moistureLevel` (`[0, 1]`, `0.5` = neutral) into a flat
+offset in `[-0.3, 0.3]` added to the raw noise before clamping — shifting the
+whole map's starting humidity wetter or drier uniformly, before rivers and
+modifiers reshape it further downstream.
 
 ### 4. Rivers — `RiverStep`
 
@@ -125,16 +159,19 @@ Two effects reshape the base humidity using the geography built so far:
 ### 6. Biomes — `BiomeAssignmentStep`
 
 The final classification crosses **temperature** and **moisture** in a
-Whittaker-style 3x3 matrix (see `plan.md`'s biome section), with elevation
+Whittaker-style matrix (see `plan.md`'s biome section), with elevation
 carving out oceans (`elevation < seaLevel`) and bare peaks
 (`elevation >= highMountainElevation`, split into `mountain`/`glacier` purely
-by temperature) regardless of climate:
+by temperature) regardless of climate. The temperate+dry cell is further
+split by `plainsMoisture` into `plains` (very arid) and `grassland`
+(moderately dry), and every cold tile collapses to a single `tundra` biome
+regardless of moisture:
 
 ```
-              dry          moderate          wet
-  warm      desert         savanna       tropicalRainforest
-  temperate grassland   temperateForest       swamp
-  cold       tundra         taiga            taiga
+               very dry     dry        moderate     wet
+  warm        desert                  savanna      jungle
+  temperate   plains       grassland  forest       swamp
+  cold        tundra       tundra     tundra       tundra
 ```
 
 ## Tuning
@@ -145,22 +182,63 @@ overall feel of generated worlds:
 
 | Want to...                                   | Touch...                                                         |
 |-----------------------------------------------|------------------------------------------------------------------|
-| Bigger/smaller continents, more/less detail   | `noise` (frequency/octaves/persistence/lacunarity), `island.shape` |
+| Bigger/smaller continents, more/less terrain detail | `MapConfig.noise` (frequency/octaves/persistence/lacunarity), `island.shape` |
 | More/less ocean                               | `island.seaLevel`                                                |
-| Colder/warmer worlds, more/less alpine snow    | `TemperatureStep`'s `altitudeFactor`                             |
-| Wetter/drier base climate                     | `MoistureStep`'s noise frequency/octaves                        |
+| Smoother/more chaotic coastlines (continents/fractal only) | `MapConfig.irregularity` (`[0, 1]`, `0.5` = neutral) |
+| Globally raise/lower the terrain (more/less land & mountains) | `MapConfig.heightLevel` (`[0, 1]`, `0.5` = neutral) |
+| Colder/warmer worlds, more/less alpine snow    | `TemperatureStep`'s `altitudeFactor`, `MapConfig.temperatureLevel` (`[0, 1]`, `0.5` = neutral) |
+| Globally wetter/drier climate                  | `MapConfig.moistureLevel` (`[0, 1]`, `0.5` = neutral)           |
+| Bigger/smaller humidity patches, more/less detail | `MoistureStep`'s noise frequency/octaves (shares `MapConfig.noise`'s frequency, scaled) |
 | More/fewer/longer rivers                      | `RiverStep`'s `sourceElevation`/`sourceMoisture`/`sourceChance`/`maxLength` |
 | Stronger coasts/valleys, harsher rain shadows  | `MoistureModifierStep`'s bonuses, `windDirection`, `windInfluence`, `windDepletion` |
-| Where biome boundaries fall                   | `BiomeAssignmentStep`'s temperature/moisture/elevation thresholds |
+| Where biome boundaries fall                   | `BiomeAssignmentStep`'s temperature/moisture/elevation thresholds (incl. `plainsMoisture`) |
+
+`MapConfig.seed`, `island.shape`, `heightLevel`, `temperatureLevel`,
+`moistureLevel`, `irregularity` and `noise` (frequency/octaves/persistence/
+lacunarity) are exactly the knobs `TestScene`'s `MapGenerationPanel` exposes,
+alongside a button that rolls a fresh random seed — see "Rendering" below for
+how the test scene wires them up.
 
 ## Rendering
 
-`BiomePalette.getTileColor(tile)` maps a tile to its render color: the
-biome's base color (`getBiomeColor`), tinted towards a river-blue when
-`tile.isRiver` is true (`blendColors`), so waterways stay visible over any
-terrain. `TestScene` uses it directly when drawing each hexagon — see
-`drawDebugGrid`'s neighboring `create()` code for the full render loop,
-including pan/zoom controls.
+Generation never draws anything — it only produces `MapData`. Drawing lives
+behind the `MapRenderer` interface (`render/MapRenderer.ts`):
+
+```typescript
+interface MapRenderer {
+  render(scene: Phaser.Scene, map: MapData): void;
+  clear(): void;
+}
+```
+
+`HexMapRenderer` (`render/HexMapRenderer.ts`) is the concrete implementation
+`TestScene` uses. Given a `HexMath` (which carries tile size/orientation/
+offset), it:
+
+- Fills every tile's hexagon with `BiomePalette.getBiomeColor(tile.biome)`.
+- Draws rivers as a **connected line** rather than tinting tiles: every
+  `isRiver` tile is linked to its river-flagged neighbors with a stroke
+  `hexMath.width / 2` wide (`BiomePalette.RIVER_COLOR`), so waterways read as
+  flowing lines cutting across whatever terrain is underneath.
+- Tracks every game object it creates so a later `render()`/`clear()` call
+  can destroy the previous draw before drawing again — this is what makes
+  "regenerate the map" a matter of calling `render` again.
+
+Because `HexMapRenderer` only depends on `MapData` and a `HexMath`, the same
+shape of class — or a different one entirely implementing `MapRenderer` —
+can back a minimap by handing it a `HexMath` configured with a smaller
+`size` (or a coarser drawing technique altogether), without touching map
+generation.
+
+`TestScene` wires generation and rendering together: it builds a
+`GameSession` from the current `MapGenerationParams`, hands the resulting
+`session.map` to its `HexMapRenderer`, and re-renders whenever
+`MapGenerationPanel` (`scenes/MapGenerationPanel.ts`) — a small floating HTML
+panel with a seed field (plus a 🎲 button that rolls a fresh random seed),
+island-shape select, height/temperature/moisture/irregularity sliders, an
+elevation-noise section (frequency/octaves/persistence/lacunarity) and a
+"Regenerar mapa" button — calls back with new parameters. See `TestScene`'s
+`create`/`regenerateMap` for the full wiring, including pan/zoom controls.
 
 ## Replacing or extending the pipeline
 
