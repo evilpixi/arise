@@ -19,6 +19,11 @@ export type MapGenerationPanelOptions = {
   initial: MapGenerationParams;
   /** Called with the current control values when "Regenerar mapa" is pressed. */
   onRegenerate: (params: MapGenerationParams) => void;
+  /**
+   * Called when "Mapa de muestra" is pressed.
+   * Loads the hand-authored design/test map that contains every biome type.
+   */
+  onLoadSample: () => void;
 };
 
 /** Range/step for a non-normalized numeric slider (normalized ones default to [0, 1] step 0.05). */
@@ -113,6 +118,16 @@ const BUTTON_STYLE = `
   cursor: pointer;
 `;
 
+const SAMPLE_BUTTON_STYLE = `
+  padding: 6px 12px;
+  background: #1f6feb;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+`;
+
 /**
  * Small floating HTML panel exposing the parameters `WorldMapGenerator`
  * accepts — seed (with a roll-random button), island shape, height/
@@ -142,7 +157,7 @@ export default class MapGenerationPanel {
    * @param options Initial control values and the regenerate callback.
    */
   constructor(parent: HTMLElement, options: MapGenerationPanelOptions) {
-    const { initial, onRegenerate } = options;
+    const { initial, onRegenerate, onLoadSample } = options;
 
     this.root = document.createElement("div");
     this.root.style.cssText = PANEL_STYLE;
@@ -161,6 +176,7 @@ export default class MapGenerationPanel {
     this.noiseLacunaritySlider = this.addSliderField("Lacunaridad", initial.noiseLacunarity, NOISE_LACUNARITY_RANGE);
 
     this.root.appendChild(this.buildRegenerateButton(onRegenerate));
+    this.root.appendChild(this.buildSampleButton(onLoadSample));
 
     parent.appendChild(this.root);
   }
@@ -193,6 +209,16 @@ export default class MapGenerationPanel {
     button.textContent = "Regenerar mapa";
     button.style.cssText = BUTTON_STYLE;
     button.addEventListener("click", () => onRegenerate(this.readParams()));
+    return button;
+  }
+
+  /** Secondary button that loads the hand-authored sample map for design review. */
+  private buildSampleButton(onLoadSample: () => void): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.textContent = "Mapa de muestra";
+    button.title = "Carga un mapa pequeño con todos los biomas para revisar los elementos visuales";
+    button.style.cssText = SAMPLE_BUTTON_STYLE;
+    button.addEventListener("click", () => onLoadSample());
     return button;
   }
 

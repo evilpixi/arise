@@ -31,6 +31,8 @@ NoiseUtils.ts           mulberry32 (seeded PRNG), fbm (fractal noise), clamp01
 MapPipeline.ts          Runs an ordered list of MapPipelineStep over the grid
 WorldMapGenerator.ts    Builds the context + the concrete step list (the
                         IMapGenerator the game actually uses)
+StaticMapLoader.ts      IMapGenerator that serves a fixed MapData — drop-in
+                        replacement for WorldMapGenerator for authored maps
 BiomePalette.ts         Biome -> render color mapping + river line color
 pipeline/
   ElevationStep.ts          1. height field (noise + shape mask + height bias)
@@ -39,9 +41,12 @@ pipeline/
   RiverStep.ts              4. river tracing (downhill from highlands to sea)
   MoistureModifierStep.ts   5. river/coast bonuses + prevailing-wind rain shadow
   BiomeAssignmentStep.ts    6. final biome classification (Whittaker matrix)
+maps/
+  SampleMap.ts              Hand-authored 5×3 grid with every biome (design map)
 render/
   MapRenderer.ts            Rendering strategy interface — consumes MapData only
-  HexMapRenderer.ts         Hex-tile implementation (biome fill + river lines)
+  HexMapRenderer.ts         Hex-tile + terrain elements + river lines
+  TerrainElementDrawer.ts   Per-biome decorative shapes (mountains, trees, grass…)
 ```
 
 Map *generation* and map *rendering* are intentionally independent: every
@@ -213,16 +218,20 @@ interface MapRenderer {
 
 `HexMapRenderer` (`render/HexMapRenderer.ts`) is the concrete implementation
 `TestScene` uses. Given a `HexMath` (which carries tile size/orientation/
-offset), it:
+offset), it renders in three back-to-front layers:
 
-- Fills every tile's hexagon with `BiomePalette.getBiomeColor(tile.biome)`.
-- Draws rivers as a **connected line** rather than tinting tiles: every
-  `isRiver` tile is linked to its river-flagged neighbors with a stroke
-  `hexMath.width / 2` wide (`BiomePalette.RIVER_COLOR`), so waterways read as
-  flowing lines cutting across whatever terrain is underneath.
-- Tracks every game object it creates so a later `render()`/`clear()` call
-  can destroy the previous draw before drawing again — this is what makes
-  "regenerate the map" a matter of calling `render` again.
+1. **Biome fill hexagons** — each tile filled with `BiomePalette.getBiomeColor(tile.biome)`.
+2. **Terrain element overlays** — `TerrainElementDrawer` draws biome-specific
+   decorative shapes (mountain peak triangles, grass blades, hill arcs, pine
+   silhouettes, forest/jungle trees) into a single shared `Graphics` object.
+   All sizes are proportional to `hexMath.size` so elements scale when the
+   tile size changes. See `render/MapRender.doc.md` for the full catalogue.
+3. **River lines** — every `isRiver` tile linked to its river-flagged neighbors
+   with a stroke `hexMath.width / 4` wide (`BiomePalette.RIVER_COLOR`), so
+   waterways read as flowing lines cutting across terrain.
+
+All game objects are tracked so a subsequent `render()`/`clear()` destroys
+them before drawing again — "regenerate the map" is simply calling `render`.
 
 Because `HexMapRenderer` only depends on `MapData` and a `HexMath`, the same
 shape of class — or a different one entirely implementing `MapRenderer` —
@@ -233,12 +242,20 @@ generation.
 `TestScene` wires generation and rendering together: it builds a
 `GameSession` from the current `MapGenerationParams`, hands the resulting
 `session.map` to its `HexMapRenderer`, and re-renders whenever
-`MapGenerationPanel` (`scenes/MapGenerationPanel.ts`) — a small floating HTML
-panel with a seed field (plus a 🎲 button that rolls a fresh random seed),
-island-shape select, height/temperature/moisture/irregularity sliders, an
-elevation-noise section (frequency/octaves/persistence/lacunarity) and a
-"Regenerar mapa" button — calls back with new parameters. See `TestScene`'s
-`create`/`regenerateMap` for the full wiring, including pan/zoom controls.
+`MapGenerationPanel` (`scenes/MapGenerationPanel.ts`) calls back with new
+parameters. The panel exposes a seed field (plus a 🎲 button), island-shape
+select, height/temperature/moisture/irregularity sliders, an elevation-noise
+section and two buttons:
+
+- **"Regenerar mapa"** — generates a new world from the current controls via
+  `WorldMapGenerator`.
+- **"Mapa de muestra"** — loads the hand-authored `SampleMap` via
+  `StaticMapLoader`, exercising the same `IMapGenerator → GameSession →
+  renderer` pipeline and demonstrating that the renderer is agnostic to the
+  map source.
+
+See `TestScene`'s `create`/`regenerateMap`/`loadSampleMap` for the full
+wiring, including pan/zoom controls.
 
 ## Replacing or extending the pipeline
 

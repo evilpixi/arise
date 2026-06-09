@@ -2,13 +2,16 @@ import Phaser from 'phaser';
 import HexMath from '../hex/HexMath';
 import GameSession from '../game/GameSession';
 import WorldMapGenerator from '../mapcreation/WorldMapGenerator';
+import StaticMapLoader from '../mapcreation/StaticMapLoader';
+import { getSampleMap } from '../mapcreation/maps/SampleMap';
 import HexMapRenderer from '../mapcreation/render/HexMapRenderer';
 import MapGenerationPanel from './MapGenerationPanel';
+import TileInfoPanel from './TileInfoPanel';
 import type { MapGenerationParams } from './MapGenerationPanel';
 
-const TILE_SIZE = 8;
-const MAP_WIDTH = 16 * 8;
-const MAP_HEIGHT = 10 * 8;
+const TILE_SIZE = 32;
+const MAP_WIDTH = 16 * 4;
+const MAP_HEIGHT = 10 * 4;
 
 // Initial values for the elevation-noise sliders in `MapGenerationPanel`;
 // the panel owns them from here on, `regenerateMap` just relays its values.
@@ -48,6 +51,7 @@ export class TestScene extends Phaser.Scene {
 
   private mapRenderer?: HexMapRenderer;
   private panel?: MapGenerationPanel;
+  private tileInfoPanel?: TileInfoPanel;
 
   constructor() {
     super({ key: 'TestScene' });
@@ -57,14 +61,26 @@ export class TestScene extends Phaser.Scene {
     this.drawDebugGrid();
     this.mapRenderer = new HexMapRenderer(this.hexMath);
 
+    // Wire tile hover → info panel before the first render so the first set
+    // of tile polygons is already made interactive.
+    this.tileInfoPanel = new TileInfoPanel(document.body);
+    this.mapRenderer.setTileHoverCallbacks(
+      (tile) => this.tileInfoPanel!.showTile(tile),
+      ()     => this.tileInfoPanel!.hide()
+    );
+
     const initialParams = defaultGenerationParams();
     this.regenerateMap(initialParams);
 
     this.panel = new MapGenerationPanel(document.body, {
       initial: initialParams,
       onRegenerate: (params) => this.regenerateMap(params),
+      onLoadSample: () => this.loadSampleMap(),
     });
-    this.events.once('shutdown', () => this.panel?.destroy());
+    this.events.once('shutdown', () => {
+      this.panel?.destroy();
+      this.tileInfoPanel?.destroy();
+    });
 
     this.setupCameraControls();
   }
@@ -88,6 +104,20 @@ export class TestScene extends Phaser.Scene {
       irregularity: params.irregularity,
     });
 
+    this.mapRenderer?.render(this, session.map);
+  }
+
+  /**
+   * Load and render the hand-authored sample map.
+   * Uses `StaticMapLoader` so the same `IMapGenerator` → `GameSession` →
+   * renderer pipeline is exercised, proving the renderer is agnostic to
+   * whether the map was generated procedurally or loaded from static data.
+   */
+  private loadSampleMap(): void {
+    const session = new GameSession(
+      new StaticMapLoader(getSampleMap()),
+      { mapWidth: 5, mapHeight: 3, seed: 0 }
+    );
     this.mapRenderer?.render(this, session.map);
   }
 
