@@ -242,17 +242,18 @@ generation.
 `TestScene` wires generation and rendering together: it builds a
 `GameSession` from the current `MapGenerationParams`, hands the resulting
 `session.map` to its `HexMapRenderer`, and re-renders whenever
-`MapGenerationPanel` (`scenes/MapGenerationPanel.ts`) calls back with new
-parameters. The panel exposes a seed field (plus a 🎲 button), island-shape
+`MapGenerationPanel` (`scenes/MapGenerationPanel.ts`) detects a control
+change. The panel exposes a seed field (plus a 🎲 button), island-shape
 select, height/temperature/moisture/irregularity sliders, an elevation-noise
-section and two buttons:
+section and one action button:
 
-- **"Regenerar mapa"** — generates a new world from the current controls via
-  `WorldMapGenerator`.
 - **"Mapa de muestra"** — loads the hand-authored `SampleMap` via
   `StaticMapLoader`, exercising the same `IMapGenerator → GameSession →
   renderer` pipeline and demonstrating that the renderer is agnostic to the
   map source.
+
+Sliders debounce regeneration by 300 ms while dragging; selects and the seed
+field fire immediately on `change`.
 
 See `TestScene`'s `create`/`regenerateMap`/`loadSampleMap` for the full
 wiring, including pan/zoom controls.

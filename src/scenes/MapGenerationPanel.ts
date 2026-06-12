@@ -17,8 +17,8 @@ export type MapGenerationParams = {
 export type MapGenerationPanelOptions = {
   /** Values the controls start with. */
   initial: MapGenerationParams;
-  /** Called with the current control values when "Regenerar mapa" is pressed. */
-  onRegenerate: (params: MapGenerationParams) => void;
+  /** Called whenever a control value changes (debounced for sliders). */
+  onParamsChange: (params: MapGenerationParams) => void;
   /**
    * Called when "Mapa de muestra" is pressed.
    * Loads the hand-authored design/test map that contains every biome type.
@@ -35,6 +35,9 @@ const NOISE_FREQUENCY_RANGE: SliderRange = { min: 0.01, max: 0.2, step: 0.005 };
 const NOISE_OCTAVES_RANGE: SliderRange = { min: 1, max: 8, step: 1 };
 const NOISE_PERSISTENCE_RANGE: SliderRange = { min: 0, max: 1, step: 0.05 };
 const NOISE_LACUNARITY_RANGE: SliderRange = { min: 1, max: 6, step: 0.1 };
+
+/** Delay before regenerating while a slider is being dragged. */
+const SLIDER_DEBOUNCE_MS = 100;
 
 function randomSeed(): number {
   return Math.floor(Math.random() * 2 ** 32);
@@ -107,17 +110,6 @@ const SLIDER_STYLE = `
   width: 100%;
 `;
 
-const BUTTON_STYLE = `
-  margin-top: 4px;
-  padding: 8px 12px;
-  background: #238636;
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
-  font-weight: 600;
-  cursor: pointer;
-`;
-
 const SAMPLE_BUTTON_STYLE = `
   padding: 6px 12px;
   background: #1f6feb;
@@ -131,8 +123,8 @@ const SAMPLE_BUTTON_STYLE = `
 /**
  * Small floating HTML panel exposing the parameters `WorldMapGenerator`
  * accepts — seed (with a roll-random button), island shape, height/
- * temperature/moisture/irregularity levels and elevation-noise settings —
- * plus a button that regenerates the map with the current values.
+ * temperature/moisture/irregularity levels and elevation-noise settings.
+ * Changing any control regenerates the map automatically.
  *
  * It lives outside Phaser's canvas as plain DOM — the simplest way to get
  * sliders, selects and number inputs without wiring up `dom.createContainer`
@@ -150,14 +142,15 @@ export default class MapGenerationPanel {
   private readonly noiseOctavesSlider: HTMLInputElement;
   private readonly noisePersistenceSlider: HTMLInputElement;
   private readonly noiseLacunaritySlider: HTMLInputElement;
+  private sliderDebounceTimer?: ReturnType<typeof setTimeout>;
 
   /**
    * Build the panel and attach it to `parent`.
    * @param parent DOM element the panel is appended to (e.g. `document.body`).
-   * @param options Initial control values and the regenerate callback.
+   * @param options Initial control values and the params-change callback.
    */
   constructor(parent: HTMLElement, options: MapGenerationPanelOptions) {
-    const { initial, onRegenerate, onLoadSample } = options;
+    const { initial, onParamsChange, onLoadSample } = options;
 
     this.root = document.createElement("div");
     this.root.style.cssText = PANEL_STYLE;
@@ -175,14 +168,17 @@ export default class MapGenerationPanel {
     this.noisePersistenceSlider = this.addSliderField("Persistencia", initial.noisePersistence, NOISE_PERSISTENCE_RANGE);
     this.noiseLacunaritySlider = this.addSliderField("Lacunaridad", initial.noiseLacunarity, NOISE_LACUNARITY_RANGE);
 
-    this.root.appendChild(this.buildRegenerateButton(onRegenerate));
     this.root.appendChild(this.buildSampleButton(onLoadSample));
+    this.bindAutoRegenerate(onParamsChange);
 
     parent.appendChild(this.root);
   }
 
   /** Detach the panel from the DOM; the owning scene controls its lifetime. */
   public destroy(): void {
+    if (this.sliderDebounceTimer !== undefined) {
+      clearTimeout(this.sliderDebounceTimer);
+    }
     this.root.remove();
   }
 
@@ -204,12 +200,32 @@ export default class MapGenerationPanel {
 
   // ---------------------------- field builders ----------------------------
 
-  private buildRegenerateButton(onRegenerate: (params: MapGenerationParams) => void): HTMLButtonElement {
-    const button = document.createElement("button");
-    button.textContent = "Regenerar mapa";
-    button.style.cssText = BUTTON_STYLE;
-    button.addEventListener("click", () => onRegenerate(this.readParams()));
-    return button;
+  /** Wire every control to notify `onParamsChange` when its value changes. */
+  private bindAutoRegenerate(onParamsChange: (params: MapGenerationParams) => void): void {
+    const notify = () => onParamsChange(this.readParams());
+    const notifyDebounced = () => {
+      if (this.sliderDebounceTimer !== undefined) {
+        clearTimeout(this.sliderDebounceTimer);
+      }
+      this.sliderDebounceTimer = setTimeout(notify, SLIDER_DEBOUNCE_MS);
+    };
+
+    this.seedInput.addEventListener("change", notify);
+    this.shapeSelect.addEventListener("change", notify);
+
+    const sliders = [
+      this.heightSlider,
+      this.temperatureSlider,
+      this.moistureSlider,
+      this.irregularitySlider,
+      this.noiseFrequencySlider,
+      this.noiseOctavesSlider,
+      this.noisePersistenceSlider,
+      this.noiseLacunaritySlider,
+    ];
+    for (const slider of sliders) {
+      slider.addEventListener("input", notifyDebounced);
+    }
   }
 
   /** Secondary button that loads the hand-authored sample map for design review. */
@@ -237,6 +253,7 @@ export default class MapGenerationPanel {
     rollButton.style.cssText = RANDOM_SEED_BUTTON_STYLE;
     rollButton.addEventListener("click", () => {
       input.value = String(randomSeed());
+      input.dispatchEvent(new Event("change"));
     });
 
     const row = document.createElement("div");

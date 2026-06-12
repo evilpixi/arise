@@ -74,7 +74,7 @@ export class TestScene extends Phaser.Scene {
 
     this.panel = new MapGenerationPanel(document.body, {
       initial: initialParams,
-      onRegenerate: (params) => this.regenerateMap(params),
+      onParamsChange: (params) => this.regenerateMap(params),
       onLoadSample: () => this.loadSampleMap(),
     });
     this.events.once('shutdown', () => {
