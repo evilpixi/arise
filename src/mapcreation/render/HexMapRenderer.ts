@@ -3,8 +3,14 @@ import type HexGrid from '../../hex/HexGrid';
 import HexDraws from '../../hex/HexDraws';
 import type HexMath from '../../hex/HexMath';
 import type { TileCoords, WorldPoint } from '../../hex/HexTypes';
-import { getBiomeColor, RIVER_COLOR } from '../BiomePalette';
-import type { MapData, MapTile } from '../MapTypes';
+import {
+  getBiomeColor,
+  getElevationColor,
+  getMoistureColor,
+  getTemperatureColor,
+  RIVER_COLOR,
+} from '../BiomePalette';
+import type { MapData, MapTile, MapViewMode } from '../MapTypes';
 import type { MapRenderer } from './MapRenderer';
 import TerrainElementDrawer from './TerrainElementDrawer';
 
@@ -18,17 +24,24 @@ function defaultOrigin(hexMath: HexMath): WorldPoint {
 }
 
 /**
- * Draws a `MapData` grid as filled hexagons colored by biome (`BiomePalette`),
- * with biome-specific terrain elements drawn on top (see `TerrainElementDrawer`)
- * and rivers overlaid as a connected line through every river tile.
+ * Draws a `MapData` grid as filled hexagons whose fill color is driven by the
+ * active `MapViewMode`:
  *
- * `hexMath` controls tile size/orientation, so the same renderer shape can
- * back both a full map view and a smaller minimap by handing it a `HexMath`
- * configured with a smaller `size`.
+ *  - `'biome'`       — standard biome palette (`BiomePalette`), with terrain
+ *                      element overlays (trees, mountains…) on top.
+ *  - `'elevation'`   — physical-map gradient (deep ocean → snow peaks).
+ *  - `'humidity'`    — moisture gradient (arid tan → saturated dark-blue).
+ *  - `'temperature'` — thermal gradient (frozen cyan → scorching red).
+ *
+ * Terrain element overlays are only drawn in `'biome'` mode; they would
+ * obscure data-layer colors in the other modes.  Rivers are always drawn.
+ *
+ * `hexMath` controls tile size/orientation, so the same renderer instance can
+ * back both a full map view and a minimap by using a smaller `size`.
  *
  * Render order (back to front):
- *   1. Biome fill hexagons
- *   2. Terrain element overlays (mountains, trees, grass, hills…)
+ *   1. Tile fill hexagons (color driven by `viewMode`)
+ *   2. Terrain element overlays  ← biome mode only
  *   3. River line strokes
  *
  * Tile hover events are opt-in: call `setTileHoverCallbacks` before (or after)
@@ -43,6 +56,13 @@ export default class HexMapRenderer implements MapRenderer {
   private readonly origin: WorldPoint;
   private readonly elementDrawer: TerrainElementDrawer;
   private objects: Phaser.GameObjects.GameObject[] = [];
+
+  // ---- current view mode (defaults to full biome view)
+  private viewMode: MapViewMode = 'biome';
+
+  // ---- cached scene + map so setViewMode() can re-render without args
+  private lastScene?: Phaser.Scene;
+  private lastMap?: MapData;
 
   // ---- optional tile-hover callbacks (undefined = no interactivity)
   private tileEnterCb?: (tile: MapTile) => void;
@@ -60,8 +80,15 @@ export default class HexMapRenderer implements MapRenderer {
   // --------------------------------------------------------------------------
 
   public render(scene: Phaser.Scene, map: MapData): void {
+    // Cache for setViewMode() re-renders triggered without external args.
+    this.lastScene = scene;
+    this.lastMap   = map;
+
     this.clear();
     this.drawTiles(scene, map);
+    // Biome mode: full terrain overlays. Other modes: mountains only,
+    // so the silhouette remains as a geographic reference without
+    // obscuring the gradient color data.
     this.drawTerrainElements(scene, map);
     this.drawRivers(scene, map);
   }
@@ -71,6 +98,19 @@ export default class HexMapRenderer implements MapRenderer {
       object.destroy();
     }
     this.objects = [];
+  }
+
+  /**
+   * Switch the active data layer and immediately re-render the last map.
+   * Has no effect if `render` has never been called.
+   *
+   * @param mode The view mode to activate.
+   */
+  public setViewMode(mode: MapViewMode): void {
+    this.viewMode = mode;
+    if (this.lastScene && this.lastMap) {
+      this.render(this.lastScene, this.lastMap);
+    }
   }
 
   /**
@@ -105,12 +145,49 @@ export default class HexMapRenderer implements MapRenderer {
     return { x: this.origin.x + world.x, y: this.origin.y + world.y };
   }
 
+  /**
+   * Pick the hex fill color for a tile based on the active view mode.
+   *
+   * - `'biome'`       → standard biome palette.
+   * - `'elevation'`   → two-range physical-map gradient: ocean tiles are
+   *                     normalized within [0, seaLevel] (water sub-gradient);
+   *                     land tiles within [seaLevel, 1] (land sub-gradient).
+   *                     This prevents colour bleed regardless of seaLevel.
+   * - `'humidity'`    → moisture gradient on land only; ocean tiles use the
+   *                     fixed biome ocean color (humidity data is land-only).
+   * - `'temperature'` → thermal gradient on land only; same ocean override.
+   */
+  private getTileColor(tile: MapTile): number {
+    const isOcean = tile.biome === 'ocean';
+
+    switch (this.viewMode) {
+      case 'elevation': {
+        // lastMap is always set when drawTiles is called (set in render()).
+        const seaLevel = this.lastMap!.seaLevel;
+        return getElevationColor(tile.elevation, seaLevel, isOcean);
+      }
+
+      case 'humidity':
+        // Ocean tiles carry no meaningful moisture data — keep them dark blue.
+        if (isOcean) return getBiomeColor('ocean');
+        return getMoistureColor(tile.moisture);
+
+      case 'temperature':
+        // Same ocean override: temperature gradient is for land only.
+        if (isOcean) return getBiomeColor('ocean');
+        return getTemperatureColor(tile.temperature);
+
+      default:
+        return getBiomeColor(tile.biome);
+    }
+  }
+
   private drawTiles(scene: Phaser.Scene, map: MapData): void {
     map.grid.forEachTile((tile, coords) => {
       const { x, y } = this.worldPosition(coords);
       const polygon = this.hexDraw.drawHexagon(scene, x, y, {
         filled: true,
-        color: getBiomeColor(tile.biome),
+        color: this.getTileColor(tile),
         borderThickness: 0.2,
       });
 
@@ -127,14 +204,22 @@ export default class HexMapRenderer implements MapRenderer {
   }
 
   /**
-   * Draw biome-specific decorative elements (mountains, trees, grass blades,
-   * hills, pines) over the base tile colors using a single Graphics object.
+   * Draw terrain element overlays using a single Graphics object.
+   *
+   * - Biome mode: full overlay set (mountains, trees, grass, hills, pines).
+   * - Data-layer modes: mountain triangles only, so geographic peaks remain
+   *   identifiable without obscuring the gradient color underneath.
+   *
    * Graphics objects are NOT interactive by default, so they don't block
    * pointer events from reaching the tile polygons below.
    */
   private drawTerrainElements(scene: Phaser.Scene, map: MapData): void {
     const graphics = scene.add.graphics();
-    this.elementDrawer.draw(graphics, map);
+    if (this.viewMode === 'biome') {
+      this.elementDrawer.draw(graphics, map);
+    } else {
+      this.elementDrawer.drawMountainsOnly(graphics, map);
+    }
     this.objects.push(graphics);
   }
 

@@ -9,9 +9,9 @@ import MapGenerationPanel from './MapGenerationPanel';
 import TileInfoPanel from './TileInfoPanel';
 import type { MapGenerationParams } from './MapGenerationPanel';
 
-const TILE_SIZE = 32;
+const TILE_SIZE = 16;
 const MAP_WIDTH = 16 * 4;
-const MAP_HEIGHT = 10 * 4;
+const MAP_HEIGHT = 16 * 4;
 
 // Initial values for the elevation-noise sliders in `MapGenerationPanel`;
 // the panel owns them from here on, `regenerateMap` just relays its values.
@@ -58,8 +58,9 @@ export class TestScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.drawDebugGrid();
-    this.mapRenderer = new HexMapRenderer(this.hexMath);
+    //this.drawDebugGrid();
+    // move the renderer a bit to the right so we can see the UI
+    this.mapRenderer = new HexMapRenderer(this.hexMath, { x: 80, y: 14});
 
     // Wire tile hover → info panel before the first render so the first set
     // of tile polygons is already made interactive.
@@ -72,10 +73,12 @@ export class TestScene extends Phaser.Scene {
     const initialParams = defaultGenerationParams();
     this.regenerateMap(initialParams);
 
+    // generation UI
     this.panel = new MapGenerationPanel(document.body, {
       initial: initialParams,
       onParamsChange: (params) => this.regenerateMap(params),
       onLoadSample: () => this.loadSampleMap(),
+      onViewModeChange: (mode) => this.mapRenderer?.setViewMode(mode),
     });
     this.events.once('shutdown', () => {
       this.panel?.destroy();

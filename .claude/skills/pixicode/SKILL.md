@@ -39,5 +39,4 @@ if it is about code changes:
 - update the results.
 
 # Results
-- when finished, show the results in the claude-results.md file in the / of the project. If doesnt exist create it, remember to exclude it from the repo. Write in spanish there.
 - Make a small review of the changes made and write it down in the chat. In spanish.

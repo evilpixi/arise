@@ -3,6 +3,9 @@ import type { TileCoords } from "../hex/HexTypes";
 
 export type MapShape = "pangea" | "continents" | "fractal" | "islands" | "mediterranean";
 
+/** Which data layer is rendered as hex fill color in the map viewer. */
+export type MapViewMode = 'biome' | 'elevation' | 'humidity' | 'temperature';
+
 /**
  * Noise generation settings for the map.
  */
